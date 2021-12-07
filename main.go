@@ -64,7 +64,7 @@ func ready(s *discordgo.Session, event *discordgo.Ready) {
 	// Set the playing status.
 	log.Println("BotName: ", event.User.ID)
 	log.Println("BotID: ", event.User.Username)
-	s.UserUpdateStatus(discordgo.StatusIdle)
+	s.UserUpdateStatus(discordgo.StatusOnline)
 }
 
 // This function will be called (due to AddHandler above) every time a new

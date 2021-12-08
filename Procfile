@@ -1,1 +1,0 @@
-worker: discordgo2

@@ -1,1 +1,1 @@
-worker: bin/discordgo-test
+worker: discordgo2

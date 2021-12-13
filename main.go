@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"math"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -101,7 +106,10 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// 全角？が文末にあった場合yesnoを答える
 	if strings.HasSuffix(m.Content, "？") {
 		url := "https://yesno.wtf/api"
-		res, _ := http.Get(url)
+		res, err := http.Get(url)
+		if err != nil {
+			log.Println("リクエストの送信に失敗しました", err)
+		}
 		defer res.Body.Close()
 
 		ba, err := ioutil.ReadAll(res.Body)
@@ -127,16 +135,64 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	//画像が送られて来た場合
 	if len(m.Attachments) > 0 {
-		for i, v := range m.Attachments {
-			image := v.URL
+		for _, v := range m.Attachments {
+			var b bytes.Buffer
+			w := multipart.NewWriter(&b)
+			_, name := filepath.Split(v.URL)
+			fw, err := w.CreateFormFile("image", name)
+			if err != nil {
+				fmt.Println("ライターの作成に失敗しました", err)
+			}
+
+			//送られてきた画像をGETで取得
+			res, err := http.Get(v.URL)
+			if err != nil {
+				log.Println("画像の取得に失敗しました", err)
+			}
+			defer res.Body.Close()
+
+			if _, err := io.Copy(fw, res.Body); err != nil {
+				log.Println(err)
+			}
+			w.Close()
+
+			//この猫なに猫APIへリクエスト準備
 			url := "http://whatcat.ap.mextractr.net/api_query"
-			req, err := http.NewRequest("GET", url, nil)
+			req, err := http.NewRequest("POST", url, &b)
 			if err != nil {
 				log.Printf("リクエストの作成に失敗しました%#v", err)
 			}
+
 			username := os.Getenv("USER_NAME")
 			password := os.Getenv("PASSWORD")
 			req.SetBasicAuth(username, password)
+			req.Header.Set("Content-Type", w.FormDataContentType())
+
+			client := new(http.Client)
+			resp, err := client.Do(req)
+			if err != nil {
+				log.Println("リクエストの送信に失敗しました", err)
+			}
+			defer resp.Body.Close()
+
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Print("読み込みエラー", err)
+			}
+
+			var result interface{}
+			if err := json.Unmarshal(body, &result); err != nil {
+				log.Println(err)
+			}
+
+			results := result.([]interface{})
+
+			for _, v := range results {
+				cat := v.([]interface{})
+				cats := fmt.Sprint(math.Floor(cat[1].(float64)*100), "%の確率で"+cat[0].(string))
+				s.ChannelMessageSend(m.ChannelID, cats)
+			}
+
 		}
 	}
 

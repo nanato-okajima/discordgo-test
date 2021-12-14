@@ -1,30 +1,20 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"math"
-	"mime/multipart"
-	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
-	"github.com/bwmarrin/discordgo"
+	dg "github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
-)
 
-type yesno struct {
-	Answer string
-	Forced bool
-	Image  string
-}
+	"discordgo2/whatcat"
+	"discordgo2/yesno"
+)
 
 func main() {
 	/*local only code */
@@ -41,28 +31,28 @@ func main() {
 	}
 
 	// Create a new Discord session using the provided bot token.
-	dg, err := discordgo.New("Bot " + Token)
+	d, err := dg.New("Bot " + Token)
 	if err != nil {
 		fmt.Println("error creating Discord session,", err)
 		return
 	}
 
 	// Register ready as a callback for the ready events.
-	dg.AddHandler(ready)
+	d.AddHandler(ready)
 
 	// Register the messageCreate func as a callback for MessageCreate events.
-	dg.AddHandler(messageCreate)
+	d.AddHandler(messageCreate)
 
 	// In this example, we only care about receiving message events.
-	dg.Identify.Intents = discordgo.MakeIntent(discordgo.IntentsGuilds | discordgo.IntentsGuildMessages)
+	d.Identify.Intents = dg.MakeIntent(dg.IntentsGuilds | dg.IntentsGuildMessages)
 
 	// Open a websocket connection to Discord and begin listening.
-	err = dg.Open()
+	err = d.Open()
 	if err != nil {
 		fmt.Println("error opening connection,", err)
 		return
 	}
-	defer dg.Close()
+	defer d.Close()
 
 	// Wait here until CTRL-C or other term signal is received.
 	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
@@ -75,22 +65,27 @@ func main() {
 
 // This function will be called (due to AddHandler above) when the bot receives
 // the "ready" event from Discord.
-func ready(s *discordgo.Session, event *discordgo.Ready) {
+func ready(s *dg.Session, event *dg.Ready) {
 	// Set the playing status.
 	log.Println("BotName: ", event.User.ID)
 	log.Println("BotID: ", event.User.Username)
-	s.UserUpdateStatus(discordgo.StatusOnline)
+	s.UserUpdateStatus(dg.StatusOnline)
 }
 
 // This function will be called (due to AddHandler above) every time a new
 // message is created on any channel that the authenticated bot has access to.
-func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+func messageCreate(s *dg.Session, m *dg.MessageCreate) {
 
 	// Ignore all messages created by the bot itself
 	// This isn't required in this specific example but it's a good practice.
 	// ボットからのメッセージの場合は返さないように判定します。
 	if m.Author.ID == s.State.User.ID {
 		return
+	}
+
+	// !Helloというチャットがきたら　「Hello」　と返します
+	if m.Content == "!Hello" {
+		s.ChannelMessageSend(m.ChannelID, "Hello")
 	}
 
 	// Server名を取得して返します。
@@ -105,99 +100,27 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	// 全角？が文末にあった場合yesnoを答える
 	if strings.HasSuffix(m.Content, "？") {
-		url := "https://yesno.wtf/api"
-		res, err := http.Get(url)
+		msgemb, err := yesno.Judge()
 		if err != nil {
-			log.Println("リクエストの送信に失敗しました", err)
+			log.Println("yesno判定エラー", err)
 		}
-		defer res.Body.Close()
 
-		ba, err := ioutil.ReadAll(res.Body)
-		if err != nil {
-			log.Println("レスポンスが読み込めませんでした", err)
-		}
-		yesno := yesno{}
-		err = json.Unmarshal(ba, &yesno)
-		if err != nil {
-			fmt.Println("構造化に失敗しました", err)
-		}
-		msgimg := discordgo.MessageEmbedImage{
-			URL: yesno.Image,
-		}
-		msgemb := discordgo.MessageEmbed{
-			Title:       "結果発表",
-			Image:       &msgimg,
-			Description: yesno.Answer,
-			Color:       100,
-		}
 		s.ChannelMessageSendEmbed(m.ChannelID, &msgemb)
 	}
 
-	//画像が送られて来た場合
+	//画像が送られて来た場合何の猫か答える
 	if len(m.Attachments) > 0 {
+		answer := "この猫が・・・\n"
 		for _, v := range m.Attachments {
-			var b bytes.Buffer
-			w := multipart.NewWriter(&b)
-			_, name := filepath.Split(v.URL)
-			fw, err := w.CreateFormFile("image", name)
+			cats, err := whatcat.Judge(v)
 			if err != nil {
-				fmt.Println("ライターの作成に失敗しました", err)
+				log.Println("何猫エラー", err)
+			}
+			for _, cat := range cats {
+				answer = answer + fmt.Sprintf("%sである確率%.0f%%\n", cat.Breed, math.Floor(cat.Probability*100))
 			}
 
-			//送られてきた画像をGETで取得
-			res, err := http.Get(v.URL)
-			if err != nil {
-				log.Println("画像の取得に失敗しました", err)
-			}
-			defer res.Body.Close()
-
-			if _, err := io.Copy(fw, res.Body); err != nil {
-				log.Println(err)
-			}
-			w.Close()
-
-			//この猫なに猫APIへリクエスト準備
-			url := "http://whatcat.ap.mextractr.net/api_query"
-			req, err := http.NewRequest("POST", url, &b)
-			if err != nil {
-				log.Printf("リクエストの作成に失敗しました%#v", err)
-			}
-
-			username := os.Getenv("USER_NAME")
-			password := os.Getenv("PASSWORD")
-			req.SetBasicAuth(username, password)
-			req.Header.Set("Content-Type", w.FormDataContentType())
-
-			client := new(http.Client)
-			resp, err := client.Do(req)
-			if err != nil {
-				log.Println("リクエストの送信に失敗しました", err)
-			}
-			defer resp.Body.Close()
-
-			body, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				log.Print("読み込みエラー", err)
-			}
-
-			var result interface{}
-			if err := json.Unmarshal(body, &result); err != nil {
-				log.Println(err)
-			}
-
-			results := result.([]interface{})
-
-			for _, v := range results {
-				cat := v.([]interface{})
-				cats := fmt.Sprint(math.Floor(cat[1].(float64)*100), "%の確率で"+cat[0].(string))
-				s.ChannelMessageSend(m.ChannelID, cats)
-			}
-
+			s.ChannelMessageSend(m.ChannelID, answer)
 		}
-	}
-
-	// !Helloというチャットがきたら　「Hello」　と返します
-	if m.Content == "!Hello" {
-		s.ChannelMessageSend(m.ChannelID, "Hello")
 	}
 }

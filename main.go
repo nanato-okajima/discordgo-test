@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,9 +15,15 @@ import (
 	dg "github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
 
+	"discordgo2/sendgrid"
 	"discordgo2/whatcat"
 	"discordgo2/yesno"
 )
+
+type translated struct {
+	Text string
+	code int
+}
 
 func main() {
 	/*local only code */
@@ -43,8 +52,7 @@ func main() {
 	// Register the messageCreate func as a callback for MessageCreate events.
 	d.AddHandler(messageCreate)
 
-	// In this example, we only care about receiving message events.
-	d.Identify.Intents = dg.MakeIntent(dg.IntentsGuilds | dg.IntentsGuildMessages)
+	d.AddHandler(messageReactionAdd)
 
 	// Open a websocket connection to Discord and begin listening.
 	err = d.Open()
@@ -83,9 +91,17 @@ func messageCreate(s *dg.Session, m *dg.MessageCreate) {
 		return
 	}
 
-	// !Helloというチャットがきたら　「Hello」　と返します
+	// !Helloというチャットがきたら　メッセージに絵文字をつけて
+	//「Hello」　と返します
 	if m.Content == "!Hello" {
-		s.ChannelMessageSend(m.ChannelID, "Hello")
+		err := s.MessageReactionAdd(m.ChannelID, m.Message.ID, "👺")
+		if err != nil {
+			fmt.Println("リアクションに失敗しました", err)
+		}
+		_, err = s.ChannelMessageSend(m.ChannelID, "Hello")
+		if err != nil {
+			fmt.Println("Helloに失敗しました", err)
+		}
 	}
 
 	// Server名を取得して返します。
@@ -116,11 +132,46 @@ func messageCreate(s *dg.Session, m *dg.MessageCreate) {
 			if err != nil {
 				log.Println("何猫エラー", err)
 			}
+
 			for _, cat := range cats {
-				answer = answer + fmt.Sprintf("%sである確率%.0f%%\n", cat.Breed, math.Floor(cat.Probability*100))
+				func() {
+					url := fmt.Sprintf("https://script.google.com/macros/s/AKfycbyQvThz03giX6sSV9jZHCudENQhUYnfOimZzwhvgygbVnWyhCOZEWSYJjx5UNylbWo9Wg/exec?text=%s&source=en&target=ja", cat.Breed)
+
+					res, err := http.Get(url)
+					if err != nil {
+						fmt.Println(err)
+					}
+					defer res.Body.Close()
+
+					b, _ := ioutil.ReadAll(res.Body)
+					tr := new(translated)
+					json.Unmarshal(b, &tr)
+
+					answer = answer + fmt.Sprintf("%sである確率%.0f%%\n", tr.Text, math.Floor(cat.Probability*100))
+				}()
 			}
 
 			s.ChannelMessageSend(m.ChannelID, answer)
 		}
 	}
+
+	// sendgridでメールを送る
+	if m.Content == "mail" {
+		sendgrid.SendMail()
+		s.ChannelMessageSend(m.ChannelID, "メールを送信しました")
+	}
+}
+
+func messageReactionAdd(s *dg.Session, m *dg.MessageReactionAdd) {
+	msg, err := s.ChannelMessage(m.ChannelID, m.MessageID)
+	if err != nil {
+		fmt.Println("チャンネルメッセージの取得に失敗しました", err)
+		return
+	}
+	usr, err := s.User(m.UserID)
+	if err != nil {
+		fmt.Println("ユーザーが取得できませんでした", err)
+	}
+	message := fmt.Sprintf("%sが%sをチェックしました。", usr.Username, msg.Content)
+	s.ChannelMessageSend(m.ChannelID, message)
 }

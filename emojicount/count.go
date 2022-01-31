@@ -1,8 +1,6 @@
 package count
 
 import (
-	"fmt"
-
 	dg "github.com/bwmarrin/discordgo"
 )
 
@@ -11,14 +9,12 @@ type EmojiCount struct {
 	Count int64
 }
 
-func CountEmoji(s *dg.Session, chanID string, lim int, before string, after string, around string) (*map[string]EmojiCount, error) {
-	fmt.Println(before)
-	msgs, err := s.ChannelMessages(chanID, lim, before, after, around)
+func CountAllEmoji(s *dg.Session, chanID string, before string, emjs map[string]EmojiCount) (*map[string]EmojiCount, error) {
+	msgs, err := s.ChannelMessages(chanID, 100, before, "", "")
 	if err != nil {
 		return nil, err
 	}
 
-	emjs := make(map[string]EmojiCount)
 	msgID := ""
 	for _, msg := range msgs {
 		for _, v := range msg.Reactions {
@@ -38,9 +34,20 @@ func CountEmoji(s *dg.Session, chanID string, lim int, before string, after stri
 		}
 		msgID = msg.ID
 	}
-	if msgID != before {
-		CountEmoji(s, chanID, lim, msgID, after, around)
+	if msgID != "" {
+		CountAllEmoji(s, chanID, msgID, emjs)
 	}
 
-	return &emjs, nil
+	res := sortEmj(&emjs)
+
+	return res, nil
+}
+
+func sortEmj(emjs *map[string]EmojiCount) []*EmojiCount {
+	res := make([]*EmojiCount, len(*emjs))
+	for _, v := range *emjs {
+		res = append(res, &v)
+	}
+
+	return res
 }

@@ -15,6 +15,7 @@ import (
 	dg "github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
 
+	count "discordgo2/emojicount"
 	"discordgo2/sendgrid"
 	"discordgo2/whatcat"
 	"discordgo2/yesno"
@@ -53,6 +54,10 @@ func main() {
 	d.AddHandler(messageCreate)
 
 	d.AddHandler(messageReactionAdd)
+
+	d.AddHandler(messageDelete)
+
+	d.AddHandler(emojiTotalling)
 
 	// Open a websocket connection to Discord and begin listening.
 	err = d.Open()
@@ -174,4 +179,34 @@ func messageReactionAdd(s *dg.Session, m *dg.MessageReactionAdd) {
 	}
 	message := fmt.Sprintf("%sが%sをチェックしました。", usr.Username, msg.Content)
 	s.ChannelMessageSend(m.ChannelID, message)
+}
+
+func messageDelete(s *dg.Session, m *dg.MessageDelete) {
+	fmt.Println(m.BeforeDelete)
+}
+
+func emojiTotalling(s *dg.Session, m *dg.MessageCreate) {
+	if m.Content == "e" {
+		chs, err := s.GuildChannels(m.GuildID)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		emjs := make(map[string]count.EmojiCount)
+		var cntEmj *map[string]count.EmojiCount
+		for _, ch := range chs {
+			//全チャネルのリアクション絵文字の使用状況を取得
+			cntEmj, err = count.CountAllEmoji(s, ch.ID, ch.LastMessageID, emjs)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		msg := ""
+		for _, v := range *cntEmj {
+			msg += fmt.Sprintf("%sは%d回使われています\n", v.Emoji.Name, v.Count)
+		}
+
+		s.ChannelMessageSend(m.ChannelID, msg)
+	}
 }
